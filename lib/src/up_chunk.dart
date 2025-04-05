@@ -53,7 +53,8 @@ class UpChunk {
   /// [message] is the error message
   /// [chunkNumber] is the number of the current chunk being attempted,
   /// and [attemptsLeft] is the number of attempts left before stopping the upload
-  final void Function(String message, int chunkNumber, int attemptsLeft)? onAttemptFailure;
+  final void Function(String message, int chunkNumber, int attemptsLeft)?
+      onAttemptFailure;
 
   /// Fired when a chunk has reached the max number of retries or the response code is fatal and implies that retries should not be attempted.
   final void Function(String message, int chunk, int attempts)? onError;
@@ -64,9 +65,9 @@ class UpChunk {
   /// Fired continuously with incremental upload progress. This returns the current percentage of the file that's been uploaded.
   ///
   /// [progress] a number from 0 to 100 representing the percentage of the file uploaded
-  final void Function(double progress )? onProgress;
+  final void Function(double progress)? onProgress;
 
-  Stream<List<int>> _chunk = Stream.empty();
+  Stream<List<int>> _chunk = const Stream.empty();
   int _chunkLength = 0;
   int _fileSize = 0;
   int _chunkCount = 0;
@@ -112,8 +113,8 @@ class UpChunk {
     // restart sync when back online
     // trigger events when offline/back online
     var checkEndpoint = connectionCheckEndpoint != null
-      ? connectionCheckEndpoint!
-      : _endPointUri.origin;
+        ? connectionCheckEndpoint!
+        : _endPointUri.origin;
     _internetConnection = InternetConnection.createInstance(
       customCheckOptions: [
         InternetCheckOption(uri: Uri.parse(checkEndpoint)),
@@ -128,9 +129,10 @@ class UpChunk {
 
   Future<void> _initialize() async {
     _fileSize = await file.length();
-    _totalChunks =  (_fileSize / _chunkByteSize).ceil();
+    _totalChunks = (_fileSize / _chunkByteSize).ceil();
     if (_chunkCount > _totalChunks) {
-      throw Exception('The total number of chunks is $_totalChunks, but [chunkStart] is $_chunkCount');
+      throw Exception(
+          'The total number of chunks is $_totalChunks, but [chunkStart] is $_chunkCount');
     }
 
     await _getMimeType();
@@ -173,14 +175,16 @@ class UpChunk {
 
   /// It validates the passed options
   void _validateOptions() {
-    if (chunkSize <= 0 || chunkSize % 64 != 0)
-      throw new Exception('chunkSize must be a positive number in multiples of 64');
+    if (chunkSize <= 0 || chunkSize % 64 != 0) {
+      throw new Exception(
+          'chunkSize must be a positive number in multiples of 64');
+    }
 
-    if (attempts <= 0)
-      throw new Exception('retries must be a positive number');
+    if (attempts <= 0) throw new Exception('retries must be a positive number');
 
-    if (delayBeforeAttempt < 0)
+    if (delayBeforeAttempt < 0) {
       throw new Exception('delayBeforeAttempt must be a positive number');
+    }
   }
 
   /// Gets [Uri] from [endPoint]
@@ -219,13 +223,17 @@ class UpChunk {
       'content-range': 'bytes $rangeStart-$rangeEnd/$_fileSize',
       Headers.contentLengthHeader: _chunkLength
     };
-    if (_fileMimeType != null){
+    if (_fileMimeType != null) {
       putHeaders.putIfAbsent(Headers.contentTypeHeader, () => _fileMimeType!);
     }
     headers.forEach((key, value) => putHeaders.putIfAbsent(key, () => value));
 
-    if (onAttempt != null)
-      onAttempt!(_chunkCount, _chunkLength,);
+    if (onAttempt != null) {
+      onAttempt!(
+        _chunkCount,
+        _chunkLength,
+      );
+    }
 
     _currentCancelToken = CancelToken();
 
@@ -237,7 +245,7 @@ class UpChunk {
         followRedirects: false,
         validateStatus: (status) {
           return true;
-        }
+        },
       ),
       data: _chunk,
       onSendProgress: (int sent, int total) {
@@ -245,8 +253,7 @@ class UpChunk {
           final bytesSent = _chunkCount * _chunkByteSize;
           final percentProgress = (bytesSent + sent) * 100.0 / _fileSize;
 
-          if (percentProgress < 100.0)
-            onProgress!(percentProgress);
+          if (percentProgress < 100.0) onProgress!(percentProgress);
         }
       },
       cancelToken: _currentCancelToken,
@@ -259,10 +266,11 @@ class UpChunk {
     final start = length * _chunkCount;
 
     _chunk = file.openRead(start, start + length);
-    if (start + length <= _fileSize)
+    if (start + length <= _fileSize) {
       _chunkLength = length;
-    else
+    } else {
       _chunkLength = _fileSize - start;
+    }
   }
 
   /// Called on net failure. If retry [_attemptCount] < [attempts], retry after [delayBeforeAttempt]
@@ -271,80 +279,82 @@ class UpChunk {
       _attemptCount = _attemptCount + 1;
       Timer(Duration(seconds: delayBeforeAttempt), () => _sendChunks());
 
-      if (onAttemptFailure != null)
+      if (onAttemptFailure != null) {
         onAttemptFailure!(
           'An error occurred uploading chunk $_chunkCount. ${attempts - _attemptCount} retries left.',
           _chunkCount,
           attempts - _attemptCount,
         );
+      }
 
       return;
     }
 
     _uploadFailed = true;
 
-    if (onError != null)
+    if (onError != null) {
       onError!(
         'An error occurred uploading chunk $_chunkCount. No more retries, stopping upload',
         _chunkCount,
         _attemptCount,
       );
+    }
   }
 
   /// Manages the whole upload by calling [_getChunk] and [_sendChunk]
   void _sendChunks() {
-    if (_paused || _offline || _stopped)
-      return;
+    if (_paused || _stopped) return;
 
     _getChunk();
     _sendChunk().then((res) {
-        if (successfulChunkUploadCodes.contains(res.statusCode)) {
-          _chunkCount++;
-          if (_chunkCount < _totalChunks) {
-            _attemptCount = 0;
-            _sendChunks();
-          } else {
-            if (onSuccess != null) onSuccess!();
-          }
-
-          if (onProgress != null) {
-            double percentProgress = 100.0;
-            if (_chunkCount < _totalChunks) {
-              final bytesSent = _chunkCount * _chunkByteSize;
-              percentProgress = bytesSent * 100.0 / _fileSize;
-            }
-            onProgress!(percentProgress);
-          }
-        } else if (temporaryErrorCodes.contains(res.statusCode)) {
-          if (_paused || _offline || _stopped) return;
-
-          _manageRetries();
+      if (successfulChunkUploadCodes.contains(res.statusCode)) {
+        _chunkCount++;
+        if (_chunkCount < _totalChunks) {
+          _attemptCount = 0;
+          _sendChunks();
         } else {
-          if (_paused || _offline || _stopped) return;
-
-          _uploadFailed = true;
-
-          if (onError != null)
-            onError!(
-              'Server responded with ${res.statusCode}. Stopping upload.',
-              _chunkCount,
-              _attemptCount,
-            );
+          if (onSuccess != null) onSuccess!();
         }
-      },
-      onError: (err) {
+
+        if (onProgress != null) {
+          double percentProgress = 100.0;
+          if (_chunkCount < _totalChunks) {
+            final bytesSent = _chunkCount * _chunkByteSize;
+            percentProgress = bytesSent * 100.0 / _fileSize;
+          }
+          onProgress!(percentProgress);
+        }
+      } else if (temporaryErrorCodes.contains(res.statusCode)) {
         if (_paused || _offline || _stopped) return;
 
-        // this type of error can happen after network disconnection on CORS setup
         _manageRetries();
+      } else {
+        if (_paused || _offline || _stopped) return;
+
+        _uploadFailed = true;
+
+        if (onError != null) {
+          onError!(
+            'Server responded with ${res.statusCode}. Stopping upload.',
+            _chunkCount,
+            _attemptCount,
+          );
+        }
       }
-    );
+    }, onError: (err) {
+      if (_paused || _offline || _stopped) return;
+
+      // this type of error can happen after network disconnection on CORS setup
+      _manageRetries();
+    });
   }
 
   /// Restarts the upload after if the upload failed and came to a complete stop
   void restart() {
-    if (!_uploadFailed)
-      throw Exception('Upload hasn\'t yet failed, use restart only after all retries have failed.');
+    if (!_uploadFailed) {
+      throw Exception(
+          'Upload hasn\'t yet failed, use restart only after all retries have failed.');
+    }
 
     _chunkCount = 0;
     _chunkByteSize = chunkSize * 1024;
